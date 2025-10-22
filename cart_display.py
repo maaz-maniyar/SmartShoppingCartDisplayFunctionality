@@ -78,6 +78,40 @@ def draw_gradient_header(draw):
         draw.line([(0, i), (WIDTH, i)], fill=(r, g, b))
     draw.text((10,10), "🛒 Smart Cart", font=font_header, fill=(255,255,255))
 
+def draw_cart_items(draw, start_y=60, row_height=45):
+    global scroll_index
+    y = start_y
+    visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
+
+    for idx, item in enumerate(visible_items):
+        bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
+        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
+        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)
+        y += row_height
+
+    # Arrow placement relative to rows
+    arrow_margin = 5
+    if scroll_index + VISIBLE_ROWS < len(cart_items):
+        # Down arrow slightly below last visible row (final tweak)
+        x_mid = WIDTH - TRI_SIZE - 10
+        y_top = start_y + VISIBLE_ROWS * row_height - TRI_SIZE + 16  # tiny final nudge down
+        draw.polygon([
+            (x_mid, y_top),
+            (x_mid + TRI_SIZE, y_top),
+            (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
+        ], fill=(0,0,255))
+
+    if scroll_index > 0:
+        # Up arrow just above first visible row
+        x_mid = WIDTH - TRI_SIZE - 10
+        y_top = start_y + arrow_margin
+        draw.polygon([
+            (x_mid, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE/2, y_top)
+        ], fill=(0,0,255))
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
@@ -91,50 +125,12 @@ def render_cart():
     draw_cart_items(draw)
     draw_total(draw, start_y=260)
 
-    # Convert to RGB565 before writing to framebuffer
     img_bytes = rgb_to_rgb565(img)
     try:
         with open(FB_PATH, "wb") as f:
             f.write(img_bytes)
     except Exception as e:
         print("Framebuffer error:", e)
-
-def draw_cart_items(draw, start_y=60, row_height=45):
-    global scroll_index
-    y = start_y
-    visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
-
-    # Draw cart rows
-    for idx, item in enumerate(visible_items):
-        bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
-        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
-        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
-        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
-        draw.text((450, y+10), "X", font=font_item, fill=(255,0,0))  # Cross to remove
-        y += row_height
-
-    arrow_size = 25  # Arrow size
-
-    # Up scroll arrow (if items above)
-    if scroll_index > 0:
-        x_mid = WIDTH - arrow_size - 10
-        y_top = 2  # Slightly higher to avoid overlap with first row
-        draw.polygon([
-            (x_mid, y_top + arrow_size),          # Bottom-left
-            (x_mid + arrow_size, y_top + arrow_size),  # Bottom-right
-            (x_mid + arrow_size/2, y_top)         # Top-center
-        ], fill=(255,0,0))  # Red arrow
-
-    # Down scroll arrow (if items below)
-    if scroll_index + VISIBLE_ROWS < len(cart_items):
-        x_mid = WIDTH - arrow_size - 10
-        y_top = HEIGHT - arrow_size - 5
-        draw.polygon([
-            (x_mid, y_top),                        # Top-left
-            (x_mid + arrow_size, y_top),           # Top-right
-            (x_mid + arrow_size/2, y_top + arrow_size)  # Bottom-center
-        ], fill=(255,0,0))  # Red arrow
-
 
 # ----------------------------
 # Touch handling
@@ -150,14 +146,13 @@ def touch_listener():
         print("Touchscreen not found")
         return
 
-    # Raw touchscreen coordinates for the 4 cross buttons
     cross_positions = [
-        (1091, 589),  # Row 1
-        (1671, 576),  # Row 2
-        (2121, 581),  # Row 3
-        (2732, 579),  # Row 4
+        (1091, 589),
+        (1671, 576),
+        (2121, 581),
+        (2732, 579),
     ]
-    tolerance = 150  # touch sensitivity range
+    tolerance = 150
 
     x_raw = 0
     y_raw = 0
@@ -171,24 +166,19 @@ def touch_listener():
         elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
             pressed = event.value == 1
 
-        # When touch is released, check for cross hit
         if event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH and event.value == 0:
             if not cart_items:
                 continue
-
             for idx, (cx, cy) in enumerate(cross_positions):
                 if abs(x_raw - cx) <= tolerance and abs(y_raw - cy) <= tolerance:
                     if idx < len(cart_items):
                         print(f"Removing item via X: {cart_items[idx]['name']}")
-                        # Highlight the pressed row
                         highlight_row(idx)
                         time.sleep(0.3)
                         del cart_items[idx]
                     break
 
-
 def highlight_row(index):
-    """Flash a red highlight on the selected row before deletion."""
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     draw_gradient_header(draw)
