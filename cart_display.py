@@ -91,7 +91,7 @@ def draw_cart_items(draw, start_y=60, row_height=45):
         draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)
         y += row_height
 
-    # Down arrow (16px below last row, centered horizontally)
+    # Down arrow (if more items below, horizontally centered)
     if scroll_index + VISIBLE_ROWS < len(cart_items):
         x_mid = (WIDTH - TRI_SIZE) / 2
         y_top = start_y + VISIBLE_ROWS * row_height - TRI_SIZE + 16
@@ -101,22 +101,15 @@ def draw_cart_items(draw, start_y=60, row_height=45):
             (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
         ], fill=(255, 0, 0))  # bright red
 
-    # TEMPORARY: Always show the up arrow for alignment (centered horizontally)
-    x_mid = (WIDTH - TRI_SIZE) / 2
-    y_top = start_y - 10  # shifted upwards
-    draw.polygon([
-        (x_mid, y_top + TRI_SIZE),
-        (x_mid + TRI_SIZE, y_top + TRI_SIZE),
-        (x_mid + TRI_SIZE/2, y_top)
-    ], fill=(255, 0, 0))  # bright red
-
-    # FINAL BEHAVIOR: Uncomment below to show up arrow only when items above
-    # if scroll_index > 0:
-    #     draw.polygon([
-    #         (x_mid, y_top + TRI_SIZE),
-    #         (x_mid + TRI_SIZE, y_top + TRI_SIZE),
-    #         (x_mid + TRI_SIZE/2, y_top)
-    #     ], fill=(255, 0, 0))
+    # Up arrow (if items above, horizontally centered)
+    if scroll_index > 0:
+        x_mid = (WIDTH - TRI_SIZE) / 2
+        y_top = start_y - 10
+        draw.polygon([
+            (x_mid, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE/2, y_top)
+        ], fill=(255, 0, 0))  # bright red
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
@@ -141,6 +134,7 @@ def render_cart():
 # Touch handling
 # ----------------------------
 def touch_listener():
+    global scroll_index  # <-- FIX: Declare scroll_index as global
     devices = [InputDevice(fn) for fn in list_devices()]
     ts = None
     for dev in devices:
@@ -157,6 +151,8 @@ def touch_listener():
         (2121, 581),
         (2732, 579),
     ]
+    arrow_up_pos = (941, 2086)
+    arrow_down_pos = (2993, 2090)
     tolerance = 150
 
     x_raw = 0
@@ -172,16 +168,30 @@ def touch_listener():
             pressed = event.value == 1
 
         if event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH and event.value == 0:
-            if not cart_items:
-                continue
-            for idx, (cx, cy) in enumerate(cross_positions):
-                if abs(x_raw - cx) <= tolerance and abs(y_raw - cy) <= tolerance:
-                    if idx < len(cart_items):
-                        print(f"Removing item via X: {cart_items[idx]['name']}")
-                        highlight_row(idx)
-                        time.sleep(0.3)
-                        del cart_items[idx]
-                    break
+            # --- Handle row X deletion ---
+            if cart_items:
+                for idx, (cx, cy) in enumerate(cross_positions):
+                    if abs(x_raw - cx) <= tolerance and abs(y_raw - cy) <= tolerance:
+                        if idx < len(cart_items):
+                            print(f"Removing item via X: {cart_items[idx]['name']}")
+                            highlight_row(idx)
+                            time.sleep(0.3)
+                            del cart_items[idx]
+                        break
+
+            # --- Scroll up ---
+            if abs(x_raw - arrow_up_pos[0]) <= tolerance and abs(y_raw - arrow_up_pos[1]) <= tolerance:
+                if scroll_index > 0:
+                    scroll_index -= 1
+                    print(f"Scrolled up: scroll_index = {scroll_index}")
+                    render_cart()
+
+            # --- Scroll down ---
+            if abs(x_raw - arrow_down_pos[0]) <= tolerance and abs(y_raw - arrow_down_pos[1]) <= tolerance:
+                if scroll_index + VISIBLE_ROWS < len(cart_items):
+                    scroll_index += 1
+                    print(f"Scrolled down: scroll_index = {scroll_index}")
+                    render_cart()
 
 def highlight_row(index):
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
