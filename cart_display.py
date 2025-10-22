@@ -91,27 +91,32 @@ def draw_cart_items(draw, start_y=60, row_height=45):
         draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)
         y += row_height
 
-    # Arrow placement relative to rows
-    arrow_margin = 5
+    # Down arrow (16px below last row, centered horizontally)
     if scroll_index + VISIBLE_ROWS < len(cart_items):
-        # Down arrow slightly below last visible row (final tweak)
-        x_mid = WIDTH - TRI_SIZE - 10
-        y_top = start_y + VISIBLE_ROWS * row_height - TRI_SIZE + 16  # tiny final nudge down
+        x_mid = (WIDTH - TRI_SIZE) / 2
+        y_top = start_y + VISIBLE_ROWS * row_height - TRI_SIZE + 16
         draw.polygon([
             (x_mid, y_top),
             (x_mid + TRI_SIZE, y_top),
             (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
-        ], fill=(0,0,255))
+        ], fill=(255, 0, 0))  # bright red
 
-    if scroll_index > 0:
-        # Up arrow just above first visible row
-        x_mid = WIDTH - TRI_SIZE - 10
-        y_top = start_y + arrow_margin
-        draw.polygon([
-            (x_mid, y_top + TRI_SIZE),
-            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
-            (x_mid + TRI_SIZE/2, y_top)
-        ], fill=(0,0,255))
+    # TEMPORARY: Always show the up arrow for alignment (centered horizontally)
+    x_mid = (WIDTH - TRI_SIZE) / 2
+    y_top = start_y - 10  # shifted upwards
+    draw.polygon([
+        (x_mid, y_top + TRI_SIZE),
+        (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+        (x_mid + TRI_SIZE/2, y_top)
+    ], fill=(255, 0, 0))  # bright red
+
+    # FINAL BEHAVIOR: Uncomment below to show up arrow only when items above
+    # if scroll_index > 0:
+    #     draw.polygon([
+    #         (x_mid, y_top + TRI_SIZE),
+    #         (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+    #         (x_mid + TRI_SIZE/2, y_top)
+    #     ], fill=(255, 0, 0))
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
