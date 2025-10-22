@@ -13,6 +13,10 @@ FB_PATH = "/dev/fb1"  # TFT framebuffer
 WIDTH, HEIGHT = 480, 320
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
+scroll_index = 0        # Index of the first visible item
+VISIBLE_ROWS = 4        # Number of rows visible at a time
+TRI_SIZE = 20
+
 font_header = ImageFont.truetype(FONT_PATH, 28)
 font_item = ImageFont.truetype(FONT_PATH, 22)
 font_total = ImageFont.truetype(FONT_PATH, 26)
@@ -78,10 +82,18 @@ def draw_cart_items(draw, start_y=60, row_height=45):
     y = start_y
     for idx, item in enumerate(cart_items[-5:]):  # last 5 items
         bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
-        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
-        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
-        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.rounded_rectangle([(10, y), (470, y + row_height - 5)], radius=10, fill=bg_color)
+
+        # Item name and price
+        draw.text((20, y + 10), item["name"], font=font_item, fill=COLOR_TEXT)
+        draw.text((360, y + 10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+
+        # "X" icon (remove button) at end of row
+        draw.text((430, y + 8), "✖", font=font_item, fill=(255, 0, 0))  # Red X symbol
+
         y += row_height
+
+
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
@@ -103,6 +115,38 @@ def render_cart():
     except Exception as e:
         print("Framebuffer error:", e)
 
+def draw_cart_items(draw, start_y=60, row_height=45):
+    global scroll_index
+    y = start_y
+    visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
+    for idx, item in enumerate(visible_items):
+        bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
+        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
+        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)  # Cross to remove
+        y += row_height
+
+    # Draw down scroll triangle if more items below
+    if scroll_index + VISIBLE_ROWS < len(cart_items):
+        x_mid = WIDTH - TRI_SIZE - 10
+        y_top = HEIGHT - TRI_SIZE - 5
+        draw.polygon([
+            (x_mid, y_top),
+            (x_mid + TRI_SIZE, y_top),
+            (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
+        ], fill=(0,0,255))  # Blue triangle
+
+    # Draw up scroll triangle if items above
+    if scroll_index > 0:
+        x_mid = WIDTH - TRI_SIZE - 10
+        y_top = 5
+        draw.polygon([
+            (x_mid, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE/2, y_top)
+        ], fill=(0,0,255))  # Blue triangle
+
 # ----------------------------
 # Touch handling
 # ----------------------------
@@ -117,6 +161,15 @@ def touch_listener():
         print("Touchscreen not found")
         return
 
+    # Raw touchscreen coordinates for the 4 cross buttons
+    cross_positions = [
+        (1091, 589),  # Row 1
+        (1671, 576),  # Row 2
+        (2121, 581),  # Row 3
+        (2732, 579),  # Row 4
+    ]
+    tolerance = 150  # touch sensitivity range
+
     x_raw = 0
     y_raw = 0
     pressed = False
@@ -129,21 +182,46 @@ def touch_listener():
         elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
             pressed = event.value == 1
 
-        # When touch released, check which row was pressed
+        # When touch is released, check for cross hit
         if event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH and event.value == 0:
             if not cart_items:
                 continue
-            # Map raw touch to screen coordinates
-            x_screen = x_raw * WIDTH // 4095
-            y_screen = y_raw * HEIGHT // 4095
 
-            # Because your TFT is rotated 90°, X maps to vertical row positions
-            row_height = 45
-            start_y = 60
-            row_index = (x_screen - start_y) // row_height
-            if 0 <= row_index < len(cart_items):
-                print(f"Removing item: {cart_items[row_index]['name']}")
-                del cart_items[row_index]
+            for idx, (cx, cy) in enumerate(cross_positions):
+                if abs(x_raw - cx) <= tolerance and abs(y_raw - cy) <= tolerance:
+                    if idx < len(cart_items):
+                        print(f"Removing item via X: {cart_items[idx]['name']}")
+                        # Highlight the pressed row
+                        highlight_row(idx)
+                        time.sleep(0.3)
+                        del cart_items[idx]
+                    break
+
+
+def highlight_row(index):
+    """Flash a red highlight on the selected row before deletion."""
+    img = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    draw = ImageDraw.Draw(img)
+    draw_gradient_header(draw)
+
+    start_y = 60
+    row_height = 45
+    y = start_y
+    for idx, item in enumerate(cart_items[-5:]):
+        bg_color = (255, 0, 0) if idx == index else (245, 245, 245) if idx % 2 == 0 else (220, 220, 220)
+        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
+        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.text((440, y+10), "X", font=font_item, fill=(200, 0, 0))
+        y += row_height
+
+    draw_total(draw, start_y=260)
+    img_bytes = rgb_to_rgb565(img)
+    try:
+        with open(FB_PATH, "wb") as f:
+            f.write(img_bytes)
+    except Exception as e:
+        print("Framebuffer error:", e)
 
 # ----------------------------
 # Threads
