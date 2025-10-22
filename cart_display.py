@@ -4,17 +4,18 @@ from PIL import Image, ImageDraw, ImageFont
 import threading
 import time
 import os
+from evdev import InputDevice, categorize, ecodes, list_devices
 
-
+# ----------------------------
+# Display settings
+# ----------------------------
 FB_PATH = "/dev/fb1"  # TFT framebuffer
 WIDTH, HEIGHT = 480, 320
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-
 font_header = ImageFont.truetype(FONT_PATH, 28)
 font_item = ImageFont.truetype(FONT_PATH, 22)
 font_total = ImageFont.truetype(FONT_PATH, 26)
-
 
 COLOR_HEADER_TOP = (0, 120, 255)
 COLOR_HEADER_BOTTOM = (0, 180, 255)
@@ -26,7 +27,9 @@ COLOR_TOTAL_TEXT = (255, 255, 255)
 
 cart_items = []
 
-
+# ----------------------------
+# Flask App
+# ----------------------------
 app = Flask(__name__)
 
 @app.route('/add_item', methods=['POST'])
@@ -46,6 +49,9 @@ def clear_cart():
     cart_items.clear()
     return jsonify({"message": "Cart cleared"}), 200
 
+# ----------------------------
+# Image rendering functions
+# ----------------------------
 def rgb_to_rgb565(image):
     """Convert PIL RGB image to 16-bit RGB565 bytes for TFT."""
     arr = image.convert("RGB").load()
@@ -58,7 +64,6 @@ def rgb_to_rgb565(image):
             data.append((rgb565 >> 8) & 0xFF)
             data.append(rgb565 & 0xFF)
     return bytes(data)
-
 
 def draw_gradient_header(draw):
     for i in range(50):
@@ -83,7 +88,6 @@ def draw_total(draw, start_y):
     draw.rectangle([(0, start_y), (WIDTH, start_y+50)], fill=COLOR_TOTAL_BG)
     draw.text((10, start_y+10), f"Total: ₹{total}", font=font_total, fill=COLOR_TOTAL_TEXT)
 
-
 def render_cart():
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
@@ -99,14 +103,61 @@ def render_cart():
     except Exception as e:
         print("Framebuffer error:", e)
 
+# ----------------------------
+# Touch handling
+# ----------------------------
+def touch_listener():
+    devices = [InputDevice(fn) for fn in list_devices()]
+    ts = None
+    for dev in devices:
+        if "Touchscreen" in dev.name:
+            ts = dev
+            break
+    if not ts:
+        print("Touchscreen not found")
+        return
 
+    x_raw = 0
+    y_raw = 0
+    pressed = False
+    for event in ts.read_loop():
+        if event.type == ecodes.EV_ABS:
+            if event.code == ecodes.ABS_X:
+                x_raw = event.value
+            elif event.code == ecodes.ABS_Y:
+                y_raw = event.value
+        elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
+            pressed = event.value == 1
+
+        # When touch released, check which row was pressed
+        if event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH and event.value == 0:
+            if not cart_items:
+                continue
+            # Map raw touch to screen coordinates
+            x_screen = x_raw * WIDTH // 4095
+            y_screen = y_raw * HEIGHT // 4095
+
+            # Because your TFT is rotated 90°, X maps to vertical row positions
+            row_height = 45
+            start_y = 60
+            row_index = (x_screen - start_y) // row_height
+            if 0 <= row_index < len(cart_items):
+                print(f"Removing item: {cart_items[row_index]['name']}")
+                del cart_items[row_index]
+
+# ----------------------------
+# Threads
+# ----------------------------
 def display_updater():
     while True:
         render_cart()
         time.sleep(1)
 
-
+# ----------------------------
+# Main
+# ----------------------------
 if __name__ == "__main__":
     threading.Thread(target=display_updater, daemon=True).start()
+    threading.Thread(target=touch_listener, daemon=True).start()
     print("Server running at http://<your_pi_ip>:5000")
     app.run(host="0.0.0.0", port=5000)
