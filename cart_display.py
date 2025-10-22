@@ -78,41 +78,6 @@ def draw_gradient_header(draw):
         draw.line([(0, i), (WIDTH, i)], fill=(r, g, b))
     draw.text((10,10), "🛒 Smart Cart", font=font_header, fill=(255,255,255))
 
-def draw_cart_items(draw, start_y=60, row_height=45):
-    global scroll_index
-    y = start_y
-    visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
-
-    for idx, item in enumerate(visible_items):
-        bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
-        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
-        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
-        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
-        draw.text((450, y+10), "X", font=font_item, fill=(255,0,0))  # Cross to remove
-        y += row_height
-
-    arrow_size = 25  # Increase size for visibility
-
-    # Up scroll arrow (if items above)
-    if scroll_index > 0:
-        x_mid = WIDTH - arrow_size - 10  # 10px from right edge
-        y_top = 10  # Place below header for visibility
-        draw.polygon([
-            (x_mid, y_top + arrow_size),          # Bottom-left
-            (x_mid + arrow_size, y_top + arrow_size), # Bottom-right
-            (x_mid + arrow_size/2, y_top)          # Top-center
-        ], fill=(255,0,0))  # Red up arrow for contrast
-
-    # Down scroll arrow (if items below)
-    if scroll_index + VISIBLE_ROWS < len(cart_items):
-        x_mid = WIDTH - arrow_size - 10
-        y_top = HEIGHT - arrow_size - 10  # Place above bottom edge
-        draw.polygon([
-            (x_mid, y_top),                     # Top-left
-            (x_mid + arrow_size, y_top),          # Top-right
-            (x_mid + arrow_size/2, y_top + arrow_size)  # Bottom-center
-        ], fill=(255,0,0))  # Red down arrow for contrast
-
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
@@ -138,33 +103,38 @@ def draw_cart_items(draw, start_y=60, row_height=45):
     global scroll_index
     y = start_y
     visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
+
+    # Draw cart rows
     for idx, item in enumerate(visible_items):
         bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
         draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
         draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
         draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
-        draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)  # Cross to remove
+        draw.text((450, y+10), "X", font=font_item, fill=(255,0,0))  # Cross to remove
         y += row_height
 
-    # Draw down scroll triangle if more items below
-    if scroll_index + VISIBLE_ROWS < len(cart_items):
-        x_mid = WIDTH - TRI_SIZE - 10
-        y_top = HEIGHT - TRI_SIZE - 5
-        draw.polygon([
-            (x_mid, y_top),
-            (x_mid + TRI_SIZE, y_top),
-            (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
-        ], fill=(0,0,255))  # Blue triangle
+    arrow_size = 25  # Arrow size
 
-    # Draw up scroll triangle if items above
+    # Up scroll arrow (if items above)
     if scroll_index > 0:
-        x_mid = WIDTH - TRI_SIZE - 10
-        y_top = 5
+        x_mid = WIDTH - arrow_size - 10
+        y_top = 2  # Slightly higher to avoid overlap with first row
         draw.polygon([
-            (x_mid, y_top + TRI_SIZE),
-            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
-            (x_mid + TRI_SIZE/2, y_top)
-        ], fill=(0,0,255))  # Blue triangle
+            (x_mid, y_top + arrow_size),          # Bottom-left
+            (x_mid + arrow_size, y_top + arrow_size),  # Bottom-right
+            (x_mid + arrow_size/2, y_top)         # Top-center
+        ], fill=(255,0,0))  # Red arrow
+
+    # Down scroll arrow (if items below)
+    if scroll_index + VISIBLE_ROWS < len(cart_items):
+        x_mid = WIDTH - arrow_size - 10
+        y_top = HEIGHT - arrow_size - 5
+        draw.polygon([
+            (x_mid, y_top),                        # Top-left
+            (x_mid + arrow_size, y_top),           # Top-right
+            (x_mid + arrow_size/2, y_top + arrow_size)  # Bottom-center
+        ], fill=(255,0,0))  # Red arrow
+
 
 # ----------------------------
 # Touch handling
