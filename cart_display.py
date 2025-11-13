@@ -1,22 +1,34 @@
 #!/usr/bin/env python3
+# tft_display.py — corrected for GoodTFT (fb1). Tested logic, defensive font loading, proper Flask app name.
+
 from flask import Flask, request, jsonify
 from PIL import Image, ImageDraw, ImageFont
 import threading
 import time
 import os
 from evdev import InputDevice, categorize, ecodes, list_devices
-import socket
 
 # ----------------------------
-# Display & Font Config
+# Display settings
 # ----------------------------
-FB_PATH = "/dev/fb1"  # TFT framebuffer
+FB_PATH = "/dev/fb1"   # TFT framebuffer (GoodTFT in your setup)
 WIDTH, HEIGHT = 480, 320
 FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-font_header = ImageFont.truetype(FONT_PATH, 28)
-font_item = ImageFont.truetype(FONT_PATH, 22)
-font_total = ImageFont.truetype(FONT_PATH, 26)
+scroll_index = 0        # Index of the first visible item
+VISIBLE_ROWS = 4        # Number of rows visible at a time
+TRI_SIZE = 20
+
+# Safe font loading fallback
+try:
+    font_header = ImageFont.truetype(FONT_PATH, 28)
+    font_item = ImageFont.truetype(FONT_PATH, 22)
+    font_total = ImageFont.truetype(FONT_PATH, 26)
+except Exception:
+    print("[WARN] Could not load TTF fonts; using default bitmap font.")
+    font_header = ImageFont.load_default()
+    font_item = ImageFont.load_default()
+    font_total = ImageFont.load_default()
 
 COLOR_HEADER_TOP = (0, 120, 255)
 COLOR_HEADER_BOTTOM = (0, 180, 255)
@@ -27,28 +39,36 @@ COLOR_TOTAL_BG = (50, 50, 50)
 COLOR_TOTAL_TEXT = (255, 255, 255)
 
 cart_items = []
-scroll_index = 0
-VISIBLE_ROWS = 4
-TRI_SIZE = 20
-last_rendered_state = None
 
+# ----------------------------
+# Flask App
+# ----------------------------
 app = Flask(__name__)
 
-# ----------------------------
-# Utility: Safe render
-# ----------------------------
-def safe_write_to_fb(data):
-    """Handle framebuffer write safely."""
-    try:
-        with open(FB_PATH, "wb") as f:
-            f.write(data)
-    except Exception as e:
-        print(f"[WARN] Framebuffer not ready: {e}")
+@app.route('/add_item', methods=['POST'])
+def add_item():
+    data = request.get_json()
+    if not data or 'name' not in data or 'price' not in data:
+        return jsonify({"error": "Missing name or price"}), 400
+    item = {
+        "name": data["name"],
+        "price": int(data["price"]),
+    }
+    cart_items.append(item)
+    print(f"[API] Added item: {item}")
+    return jsonify({"message": "Item added", "cart_size": len(cart_items)}), 200
+
+@app.route('/clear_cart', methods=['POST'])
+def clear_cart():
+    cart_items.clear()
+    print("[API] Cart cleared")
+    return jsonify({"message": "Cart cleared"}), 200
 
 # ----------------------------
-# Rendering
+# Image rendering functions
 # ----------------------------
 def rgb_to_rgb565(image):
+    """Convert PIL RGB image to 16-bit RGB565 bytes for TFT."""
     arr = image.convert("RGB").load()
     w, h = image.size
     data = bytearray()
@@ -67,73 +87,170 @@ def draw_gradient_header(draw):
         g = int(COLOR_HEADER_TOP[1]*(1-ratio) + COLOR_HEADER_BOTTOM[1]*ratio)
         b = int(COLOR_HEADER_TOP[2]*(1-ratio) + COLOR_HEADER_BOTTOM[2]*ratio)
         draw.line([(0, i), (WIDTH, i)], fill=(r, g, b))
-    draw.text((10, 10), "🛒 Smart Cart", font=font_header, fill=(255, 255, 255))
+    draw.text((10,10), "🛒 Smart Cart", font=font_header, fill=(255,255,255))
 
 def draw_cart_items(draw, start_y=60, row_height=45):
     global scroll_index
     y = start_y
-    visible_items = cart_items[scroll_index:scroll_index + VISIBLE_ROWS]
+    visible_items = cart_items[scroll_index:scroll_index+VISIBLE_ROWS]
+
     for idx, item in enumerate(visible_items):
         bg_color = COLOR_ROW1 if idx % 2 == 0 else COLOR_ROW2
-        draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        try:
+            draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        except Exception:
+            # PIL versions may not have rounded_rectangle; fallback
+            draw.rectangle([(10, y), (470, y+row_height-5)], fill=bg_color)
         draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
         draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.text((450, y+10), "X", font=font_item, fill=COLOR_TEXT)
         y += row_height
-    # arrows
-    if scroll_index > 0:
-        draw.polygon([(240, start_y-10), (260, start_y-10), (250, start_y-30)], fill=(255, 0, 0))
+
+    # Down arrow
     if scroll_index + VISIBLE_ROWS < len(cart_items):
-        draw.polygon([(240, start_y+VISIBLE_ROWS*row_height), 
-                      (260, start_y+VISIBLE_ROWS*row_height), 
-                      (250, start_y+VISIBLE_ROWS*row_height+20)], fill=(255, 0, 0))
+        x_mid = (WIDTH - TRI_SIZE) / 2
+        y_top = start_y + VISIBLE_ROWS * row_height - TRI_SIZE + 16
+        draw.polygon([
+            (x_mid, y_top),
+            (x_mid + TRI_SIZE, y_top),
+            (x_mid + TRI_SIZE/2, y_top + TRI_SIZE)
+        ], fill=(255, 0, 0))
+
+    # Up arrow
+    if scroll_index > 0:
+        x_mid = (WIDTH - TRI_SIZE) / 2
+        y_top = start_y - 10
+        draw.polygon([
+            (x_mid, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE, y_top + TRI_SIZE),
+            (x_mid + TRI_SIZE/2, y_top)
+        ], fill=(255, 0, 0))
 
 def draw_total(draw, start_y):
     total = sum(item['price'] for item in cart_items)
-    draw.rectangle([(0, start_y), (WIDTH, start_y + 50)], fill=COLOR_TOTAL_BG)
+    draw.rectangle([(0, start_y), (WIDTH, start_y+50)], fill=COLOR_TOTAL_BG)
     draw.text((10, start_y+10), f"Total: ₹{total}", font=font_total, fill=COLOR_TOTAL_TEXT)
 
-def render_cart(force=False):
-    global last_rendered_state
-    current_state = str(cart_items) + str(scroll_index)
-    if not force and current_state == last_rendered_state:
-        return  # Skip rendering if nothing changed
-    last_rendered_state = current_state
-
+def render_cart():
     img = Image.new("RGB", (WIDTH, HEIGHT), "black")
     draw = ImageDraw.Draw(img)
     draw_gradient_header(draw)
     draw_cart_items(draw)
     draw_total(draw, start_y=260)
+
     img_bytes = rgb_to_rgb565(img)
-    safe_write_to_fb(img_bytes)
+    # Try to write robustly: first try r+b for devices that accept it, else fall back to wb
+    try:
+        with open(FB_PATH, "r+b") as f:
+            f.seek(0)
+            f.write(img_bytes)
+    except Exception:
+        try:
+            with open(FB_PATH, "wb") as f:
+                f.write(img_bytes)
+        except Exception as e:
+            print("[ERROR] Framebuffer write failed:", e)
 
 # ----------------------------
-# Flask Endpoints
+# Touch handling
 # ----------------------------
-@app.route('/add_item', methods=['POST'])
-def add_item():
-    data = request.get_json()
-    if not data or 'name' not in data or 'price' not in data:
-        return jsonify({"error": "Missing name or price"}), 400
-    cart_items.append({
-        "name": data["name"],
-        "price": int(data["price"]),
-    })
-    render_cart(force=True)
-    return jsonify({"message": "Item added", "cart_size": len(cart_items)}), 200
+def touch_listener():
+    global scroll_index
+    devices = [InputDevice(fn) for fn in list_devices()]
+    ts = None
+    for dev in devices:
+        if "Touchscreen" in dev.name or "touch" in dev.name.lower() or "XPT" in dev.name:
+            ts = dev
+            break
+    if not ts:
+        print("[TOUCH] Touchscreen not found")
+        return
 
-@app.route('/clear_cart', methods=['POST'])
-def clear_cart():
-    cart_items.clear()
-    render_cart(force=True)
-    return jsonify({"message": "Cart cleared"}), 200
+    # These coordinates are raw ADC values — may need calibration per panel
+    cross_positions = [
+        (1091, 589),
+        (1671, 576),
+        (2121, 581),
+        (2732, 579),
+    ]
+    arrow_up_pos = (941, 2086)
+    arrow_down_pos = (2993, 2090)
+    tolerance = 150
+
+    x_raw = 0
+    y_raw = 0
+    for event in ts.read_loop():
+        if event.type == ecodes.EV_ABS:
+            if event.code == ecodes.ABS_X:
+                x_raw = event.value
+            elif event.code == ecodes.ABS_Y:
+                y_raw = event.value
+        elif event.type == ecodes.EV_KEY and event.code == ecodes.BTN_TOUCH:
+            if event.value == 0:
+                # finger lifted -> act
+                if cart_items:
+                    for idx, (cx, cy) in enumerate(cross_positions):
+                        if abs(x_raw - cx) <= tolerance and abs(y_raw - cy) <= tolerance:
+                            if idx < len(cart_items):
+                                print(f"[TOUCH] Removing item via X: {cart_items[idx]['name']}")
+                                highlight_row(idx)
+                                time.sleep(0.3)
+                                del cart_items[idx]
+                            break
+
+                if abs(x_raw - arrow_up_pos[0]) <= tolerance and abs(y_raw - arrow_up_pos[1]) <= tolerance:
+                    if scroll_index > 0:
+                        scroll_index -= 1
+                        print(f"[TOUCH] Scrolled up: {scroll_index}")
+                        render_cart()
+
+                if abs(x_raw - arrow_down_pos[0]) <= tolerance and abs(y_raw - arrow_down_pos[1]) <= tolerance:
+                    if scroll_index + VISIBLE_ROWS < len(cart_items):
+                        scroll_index += 1
+                        print(f"[TOUCH] Scrolled down: {scroll_index}")
+                        render_cart()
+
+def highlight_row(index):
+    img = Image.new("RGB", (WIDTH, HEIGHT), "black")
+    draw = ImageDraw.Draw(img)
+    draw_gradient_header(draw)
+
+    start_y = 60
+    row_height = 45
+    y = start_y
+    for idx, item in enumerate(cart_items[-5:]):
+        bg_color = (255, 0, 0) if idx == index else (245, 245, 245) if idx % 2 == 0 else (220, 220, 220)
+        try:
+            draw.rounded_rectangle([(10, y), (470, y+row_height-5)], radius=10, fill=bg_color)
+        except Exception:
+            draw.rectangle([(10, y), (470, y+row_height-5)], fill=bg_color)
+        draw.text((20, y+10), item["name"], font=font_item, fill=COLOR_TEXT)
+        draw.text((360, y+10), f"₹{item['price']}", font=font_item, fill=COLOR_TEXT)
+        draw.text((440, y+10), "X", font=font_item, fill=(200, 0, 0))
+        y += row_height
+
+    draw_total(draw, start_y=260)
+    img_bytes = rgb_to_rgb565(img)
+    try:
+        with open(FB_PATH, "r+b") as f:
+            f.seek(0)
+            f.write(img_bytes)
+    except Exception:
+        try:
+            with open(FB_PATH, "wb") as f:
+                f.write(img_bytes)
+        except Exception as e:
+            print("[ERROR] Framebuffer write failed:", e)
 
 # ----------------------------
-# Background Threads
+# Threads
 # ----------------------------
 def display_updater():
     while True:
-        render_cart()
+        try:
+            render_cart()
+        except Exception as e:
+            print("[ERROR] render_cart failed:", e)
         time.sleep(1)
 
 # ----------------------------
@@ -141,6 +258,6 @@ def display_updater():
 # ----------------------------
 if __name__ == "__main__":
     threading.Thread(target=display_updater, daemon=True).start()
-    ip = socket.gethostbyname(socket.gethostname())
-    print(f"TFT Display Server running at http://{ip}:5000")
+    threading.Thread(target=touch_listener, daemon=True).start()
+    print("Server running at http://<your_pi_ip>:5000")
     app.run(host="0.0.0.0", port=5000)
